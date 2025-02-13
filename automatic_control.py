@@ -25,6 +25,7 @@ import sys
 import weakref
 import pickle
 
+
 try:
     import pygame
     from pygame.locals import KMOD_CTRL
@@ -83,9 +84,12 @@ try:
     sys.path.append(glob.glob('PythonAPI')[0])
 except IndexError:
     pass
-
 import carla
+
+print(carla.__file__)
+
 from carla import ColorConverter as cc
+sys.path.append('/home/mienvt/Downloads/RL/CARLA_0.9.5/PythonAPI/carla')
 from agents.navigation.roaming_agent import RoamingAgent
 from agents.navigation.basic_agent import BasicAgent
 
@@ -212,6 +216,12 @@ class KeyboardControl(object):
         self.recording_data = []
 
     def parse_events(self, client, world, clock):
+        if world.recording_enabled == True:
+                self.record_data(world)
+        else:
+            self.save_recording()  # Lưu dữ liệu khi dừng ghi
+            self.recording_data=[]
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
@@ -241,12 +251,12 @@ class KeyboardControl(object):
                         client.stop_recorder()
                         world.recording_enabled = False
                         world.hud.notification("Recorder is OFF")
-                        self.save_recording()  # Lưu dữ liệu khi dừng ghi
-                        self.recording_data=[]
+                        
                     else:
-                        self.record_data(world)
+                        client.start_recorder("manual_recording.rec")
                         world.recording_enabled = True
                         world.hud.notification("Recorder is ON")
+                        
                 elif event.key == K_p and (pygame.key.get_mods() & KMOD_CTRL):
                     # stop recorder
                     client.stop_recorder()
@@ -300,22 +310,46 @@ class KeyboardControl(object):
             elif isinstance(self._control, carla.WalkerControl):
                 self._parse_walker_keys(pygame.key.get_pressed(), clock.get_time())
                 world.player.apply_control(self._control)
+        
 
     def record_data(self,world):
-        control = self._control
+        c=world.player.get_control()
         # Ghi lại các thông số vào danh sách
-        data = {
-            'image': self.get_image(world),  # Hình ảnh từ camera
-            'throttle': control.throttle,
-            'steer': control.steer,
-            'brake': control.brake
-        }
+        data = [
+            ('image:', self.get_image(world)),  # Hình ảnh từ camera
+            ('Throttle:', c.throttle),
+            ('Steer:', c.steer),
+            ('Brake:', c.brake),
+        ]
+        print(data)
         self.recording_data.append(data)
-    def get_image(self,world):
-        img1d = np.fromstring(world.hud.camera_manager.surface.image_data_uint8, dtype=np.uint8)
-        img = img1d.reshape(world.hud.camera_manager.surface.height, self.hud.camera_manager.surface.width, 4)
-        img = img[:, :, 0:3]
-        return img
+    def get_image(self, world):
+        # Chọn vị trí camera 1 và đảm bảo camera đã được khởi tạo
+        camera = world.camera_manager.choose_camera_position(1)
+        if camera is None:
+            print("Camera chưa được khởi tạo!")
+            return None  # Trả về None nếu không có camera hợp lệ
+
+        # Thiết lập cảm biến camera và đảm bảo nó đã được cấu hình đúng
+        try:
+            # Thiết lập cảm biến camera tại vị trí index 0
+            world.camera_manager.set_sensor(0, notify=False)
+
+            # Lấy dữ liệu hình ảnh từ camera (sử dụng _parse_image để xử lý)
+            image_data = world.camera_manager.cal_image()
+
+            if image_data is None:
+                print("Noneeeeee!")
+                return None
+            else:
+                return image_data
+            
+
+        except Exception as e:
+            print(f"Failll: {str(e)}")
+            return None  # Nếu có lỗi xảy ra, trả về None
+
+
     # Hàm để lưu dữ liệu vào file pkl
     def save_recording(self, filename='recording.pkl'):
         with open(filename, 'wb') as f:
@@ -678,10 +712,26 @@ class CameraManager(object):
                 bp.set_attribute('range', '5000')
             item.append(bp)
         self.index = None
+        self.image=None
 
     def toggle_camera(self):
         self.transform_index = (self.transform_index + 1) % len(self._camera_transforms)
         self.sensor.set_transform(self._camera_transforms[self.transform_index])
+    
+    def choose_camera_position(self, position_index):
+        """
+        Chọn vị trí camera dựa trên chỉ số.
+        :param position_index: Chỉ số của vị trí camera (0 hoặc 1).
+        """
+        if position_index < 0 or position_index >= len(self._camera_transforms):
+            self.hud.notification("should move!")
+            return
+        
+        self.transform_index = position_index
+        self.sensor.set_transform(self._camera_transforms[self.transform_index])
+        self.hud.notification(f"move_to {position_index + 1}")
+        return self.sensor
+
 
     def set_sensor(self, index, notify=True):
         index = index % len(self.sensors)
@@ -738,9 +788,12 @@ class CameraManager(object):
             array = np.reshape(array, (image.height, image.width, 4))
             array = array[:, :, :3]
             array = array[:, :, ::-1]
+            self.image=array
             self.surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
         if self.recording:
             image.save_to_disk('_out/%08d' % image.frame_number)
+    def cal_image(self):
+        return self.image
 
 
 # ==============================================================================
@@ -828,8 +881,8 @@ def main():
     argparser.add_argument(
         '--filter',
         metavar='PATTERN',
-        default='vehicle.*',
-        help='actor filter (default: "vehicle.*")')
+        default='vehicle.audi.a2',
+        help='actor filter (default: "vehicle.audi.a2")')
     argparser.add_argument("-a", "--agent", type=str,
                            choices=["Roaming", "Basic"],
                            help="select which agent to run",
