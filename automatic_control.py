@@ -313,16 +313,20 @@ class KeyboardControl(object):
         
 
     def record_data(self,world):
+        v = world.player.get_velocity()
         c=world.player.get_control()
         # Ghi lại các thông số vào danh sách
-        data = [
-            ('image:', self.get_image(world)),  # Hình ảnh từ camera
-            ('Throttle:', c.throttle),
-            ('Steer:', c.steer),
-            ('Brake:', c.brake),
-        ]
-        print(data)
-        self.recording_data.append(data)
+        img=self.get_image(world)
+        velocity=(3.6 * math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2))
+        acc=c.throttle
+        brake=c.brake
+        steer=c.steer
+        state={}
+        kinematics_state  = np.array([velocity,acc]) 
+        state['image']=img
+        state['kinematics_state'] = kinematics_state
+        action= np.array([acc,brake,steer])
+        self.recording_data.append((state, action))
     def get_image(self, world):
         # Chọn vị trí camera 1 và đảm bảo camera đã được khởi tạo
         camera = world.camera_manager.choose_camera_position(1)
@@ -881,8 +885,7 @@ def main():
     argparser.add_argument(
         '--filter',
         metavar='PATTERN',
-        default='vehicle.audi.a2',
-        help='actor filter (default: "vehicle.audi.a2")')
+        default='vehicle.audi.a2')
     argparser.add_argument("-a", "--agent", type=str,
                            choices=["Roaming", "Basic"],
                            help="select which agent to run",
